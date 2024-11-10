@@ -4,8 +4,14 @@ import json
 
 
 class NaiveBayesDiscretizer:
-    def discretize(self, X, feature_names):
+    def __init__(self, n_bins=3):
         self.bins = {}
+        self.n_bins = n_bins
+
+    def discretize(self, X, feature_names):
+        """
+        Discretize continuous features into bins using equal-width binning.
+        """
         discretized_X = pd.DataFrame()
 
         for feature in feature_names:
@@ -13,34 +19,38 @@ class NaiveBayesDiscretizer:
 
             # Check if the feature has variation
             if data.nunique() > 1:
-                bins = np.linspace(data.min(), data.max(), num=4)  # 3 equal-width bins
+                bins = np.linspace(data.min(), data.max(), num=self.n_bins + 1)
                 self.bins[feature] = bins
                 discretized_X[feature] = np.digitize(data, bins[:-1])
             else:
-                # If feature has no variation, put all values in the same bin
                 self.bins[feature] = [data.min(), data.max()]
-                discretized_X[feature] = 1  # Assign a single bin for all values
+                discretized_X[feature] = 1
 
         return discretized_X
 
     def save_bins(self, filename):
-        # Convert all ndarray bins to lists for JSON serialization
+        """Save bin boundaries to a text file."""
         bins_as_lists = {feature: bins.tolist() for feature, bins in self.bins.items()}
         with open(filename, "w") as f:
-            json.dump(bins_as_lists, f)
+            f.write(str(bins_as_lists))
 
 
-def train_naive_bayes():
+def train_naive_bayes(train_file="../Data Preparation/train.csv", n_bins=3):
+    """
+    Train Naive Bayes classifier with discretized features.
+    """
     # Load training data
-    train_data = pd.read_csv("../Data Preparation/train.csv")
+    train_data = pd.read_csv(train_file)
 
     # Separate features and target
     X = train_data.drop("target", axis=1)
     y = train_data["target"]
 
-    # Discretize features
-    discretizer = NaiveBayesDiscretizer()
+    # Initialize and apply discretizer
+    discretizer = NaiveBayesDiscretizer(n_bins=n_bins)
     X_discrete = discretizer.discretize(X, X.columns)
+
+    # Save discretization bins
     discretizer.save_bins("bins.txt")
 
     # Calculate prior probabilities with Laplace smoothing
@@ -52,25 +62,34 @@ def train_naive_bayes():
     likelihoods = {}
     for feature in X_discrete.columns:
         likelihoods[feature] = {}
-        for class_label in class_counts.index:  # Use class labels directly (strings)
+        for class_label in class_counts.index:
             feature_counts = X_discrete.loc[y == class_label, feature].value_counts()
-            # Add Laplace smoothing
-            smoothed_probs = (feature_counts + 1) / (
-                class_counts[class_label] + 3
-            )  # 3 bins
-            # Convert bin numbers to strings in the dictionary
+            smoothed_probs = (feature_counts + 1) / (class_counts[class_label] + n_bins)
             likelihoods[feature][class_label] = {
                 str(int(k)): float(v) for k, v in smoothed_probs.to_dict().items()
             }
 
-    # Save probabilities
+    # Prepare probabilities dictionary
     probabilities = {
         "priors": {str(k): float(v) for k, v in priors.to_dict().items()},
         "likelihoods": likelihoods,
+        "n_bins": n_bins,
     }
 
+    # Save model parameters to text file
     with open("probabilities.txt", "w") as f:
-        json.dump(probabilities, f)
+        f.write(str(probabilities))
+
+    print("Training completed successfully!")
+    print(f"\nPrior probabilities:")
+    for class_label, prior in probabilities["priors"].items():
+        print(f"{class_label}: {prior:.4f}")
+
+    print(f"\nFeature discretization bins:")
+    for feature, bins in discretizer.bins.items():
+        print(f"{feature}: {bins}")
+
+    return discretizer, probabilities
 
 
 if __name__ == "__main__":
