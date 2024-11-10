@@ -29,13 +29,14 @@ def predict(X_discrete, probabilities):
                     bin_value, 1/(len(probabilities['priors']) + 3)  # Laplace smoothing
                 )
                 score += np.log(likelihood)
-            class_scores[int(class_label)] = score
+            class_scores[class_label] = score  # Use class_label as string
         predictions.append(max(class_scores.items(), key=lambda x: x[1])[0])
     return predictions
 
+
 def evaluate_model():
     # Load test data
-    test_data = pd.read_csv('test.csv')
+    test_data = pd.read_csv('../Data Preparation/test.csv')
     X_test = test_data.drop('target', axis=1)
     y_test = test_data['target']
     
