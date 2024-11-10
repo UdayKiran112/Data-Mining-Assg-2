@@ -1,51 +1,65 @@
-# trainNBayes.py
-
 import pandas as pd
 import numpy as np
+import json
 
-# Load training data
-train_data = pd.read_csv("train.csv")
-
-# Discretize numerical features into 3 equal-width bins
-def discretize_features(data, feature_columns):
-    bins = 3
-    for column in feature_columns:
-        data[column] = pd.cut(data[column], bins=bins, labels=False)
-    return data
-
-# Calculate prior probabilities and likelihoods with Laplacian correction
-def calculate_probabilities(train_data, feature_columns, target_column='species'):
-    priors = train_data[target_column].value_counts(normalize=True).to_dict()
-    likelihoods = {}
-
-    # Calculate likelihoods for each species and each feature bin
-    for species in train_data[target_column].unique():
-        species_data = train_data[train_data[target_column] == species]
-        likelihoods[species] = {}
-        for feature in feature_columns:
-            # Get bin counts with Laplacian correction
-            bin_counts = species_data[feature].value_counts()
-            total_count = len(species_data) + len(bin_counts)  # Laplacian correction
-            likelihoods[species][feature] = ((bin_counts + 1) / total_count).to_dict()
+class NaiveBayesDiscretizer:
+    def discretize(self, X, feature_names):
+        self.bins = {}
+        discretized_X = pd.DataFrame()
+        
+        for feature in feature_names:
+            data = X[feature]
+            bins = np.linspace(data.min(), data.max(), num=4)  # 3 equal-width bins
+            self.bins[feature] = bins
+            discretized_X[feature] = np.digitize(data, bins[:-1])
+        
+        return discretized_X
     
-    return priors, likelihoods
+    def save_bins(self, filename):
+        with open(filename, 'w') as f:
+            json.dump({k: v.tolist() for k, v in self.bins.items()}, f)
 
-# Discretize features
-feature_columns = ['sepal_length', 'sepal_width', 'petal_length', 'petal_width']
-train_data = discretize_features(train_data, feature_columns)
+def train_naive_bayes():
+    # Load training data
+    train_data = pd.read_csv('train.csv')
+    
+    # Separate features and target
+    X = train_data.drop('target', axis=1)
+    y = train_data['target']
+    
+    # Discretize features
+    discretizer = NaiveBayesDiscretizer()
+    X_discrete = discretizer.discretize(X, X.columns)
+    discretizer.save_bins('bins.txt')
+    
+    # Calculate prior probabilities with Laplace smoothing
+    class_counts = y.value_counts()
+    num_classes = len(class_counts)
+    priors = (class_counts + 1) / (len(y) + num_classes)
+    
+    # Calculate likelihood probabilities with Laplace smoothing
+    likelihoods = {}
+    for feature in X_discrete.columns:
+        likelihoods[feature] = {}
+        for class_label in range(num_classes):
+            # Convert class_label to string
+            str_class_label = str(int(class_label))
+            feature_counts = X_discrete[y == class_label][feature].value_counts()
+            # Add Laplace smoothing
+            smoothed_probs = (feature_counts + 1) / (class_counts[class_label] + 3)  # 3 bins
+            # Convert bin numbers to strings in the dictionary
+            likelihoods[feature][str_class_label] = {
+                str(int(k)): float(v) for k, v in smoothed_probs.to_dict().items()
+            }
+    
+    # Save probabilities
+    probabilities = {
+        'priors': {str(int(k)): float(v) for k, v in priors.to_dict().items()},
+        'likelihoods': likelihoods
+    }
+    
+    with open('probabilities.txt', 'w') as f:
+        json.dump(probabilities, f)
 
-# Calculate probabilities
-priors, likelihoods = calculate_probabilities(train_data, feature_columns)
-
-# Save probabilities to a text file
-with open("probabilities.txt", "w") as file:
-    file.write("Priors:\n")
-    for species, prob in priors.items():
-        file.write(f"{species}: {prob}\n")
-    file.write("\nLikelihoods:\n")
-    for species, features in likelihoods.items():
-        file.write(f"{species}:\n")
-        for feature, probs in features.items():
-            file.write(f"  {feature}: {probs}\n")
-
-print("Priors and likelihoods saved to probabilities.txt.")
+if __name__ == "__main__":
+    train_naive_bayes()

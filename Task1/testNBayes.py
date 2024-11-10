@@ -1,88 +1,69 @@
-# testNBayes.py
-
 import pandas as pd
 import numpy as np
-from collections import defaultdict
-from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score
+import json
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, accuracy_score
 
-# Updated load_probabilities function in testNBayes.py
+def load_probabilities():
+    with open('probabilities.txt', 'r') as f:
+        return json.load(f)
 
-def load_probabilities(filename="probabilities.txt"):
-    priors = {}
-    likelihoods = defaultdict(dict)
-    with open(filename, "r") as file:
-        lines = file.readlines()
-        reading_priors = True
-        for line in lines:
-            line = line.strip()
-            if not line or line == "Likelihoods:":
-                reading_priors = False
-                continue
-            if reading_priors:
-                if ": " in line:  # Check if the line has the expected format
-                    species, prob = line.split(": ")
-                    priors[species] = float(prob)
-                else:
-                    print(f"Skipping unexpected line in priors: {line}")
-            else:
-                if ":" in line:
-                    if line.count(":") == 1:
-                        # New species section
-                        current_species = line[:-1]
-                    else:
-                        # Feature and probability mapping
-                        feature, probs = line.split(": ", 1)
-                        try:
-                            likelihoods[current_species][feature] = eval(probs)
-                        except:
-                            print(f"Skipping unexpected line in likelihoods: {line}")
-    return priors, likelihoods
+def load_bins():
+    with open('bins.txt', 'r') as f:
+        return json.load(f)
 
-# Load and discretize test data
-def discretize_features(data, feature_columns):
-    bins = 3
-    for column in feature_columns:
-        data[column] = pd.cut(data[column], bins=bins, labels=False)
-    return data
+def discretize_test_data(X, bins):
+    discretized_X = pd.DataFrame()
+    for feature in X.columns:
+        discretized_X[feature] = np.digitize(X[feature], np.array(bins[feature])[:-1])
+    return discretized_X
 
-# Naive Bayes prediction using loaded probabilities
-def predict(priors, likelihoods, row, feature_columns):
-    species_scores = {}
-    for species, prior in priors.items():
-        species_scores[species] = np.log(prior)  # Start with log prior
-        for feature in feature_columns:
-            feature_value = row[feature]
-            feature_probs = likelihoods[species].get(feature, {})
-            species_scores[species] += np.log(feature_probs.get(feature_value, 1e-6))  # Small value for unseen features
-    return max(species_scores, key=species_scores.get)
+def predict(X_discrete, probabilities):
+    predictions = []
+    for _, sample in X_discrete.iterrows():
+        class_scores = {}
+        for class_label in probabilities['priors'].keys():
+            score = np.log(probabilities['priors'][class_label])
+            for feature in X_discrete.columns:
+                bin_value = str(int(sample[feature]))  # Convert bin value to string
+                likelihood = probabilities['likelihoods'][feature][class_label].get(
+                    bin_value, 1/(len(probabilities['priors']) + 3)  # Laplace smoothing
+                )
+                score += np.log(likelihood)
+            class_scores[int(class_label)] = score
+        predictions.append(max(class_scores.items(), key=lambda x: x[1])[0])
+    return predictions
 
-# Main function to predict and evaluate on test set
-def evaluate(test_data, priors, likelihoods):
-    feature_columns = ['sepal_length', 'sepal_width', 'petal_length', 'petal_width']
-    test_data = discretize_features(test_data, feature_columns)
+def evaluate_model():
+    # Load test data
+    test_data = pd.read_csv('test.csv')
+    X_test = test_data.drop('target', axis=1)
+    y_test = test_data['target']
     
-    # Predict classes
-    test_data['predicted'] = test_data.apply(lambda row: predict(priors, likelihoods, row, feature_columns), axis=1)
+    # Load probabilities and bins
+    probabilities = load_probabilities()
+    bins = load_bins()
     
-    # Evaluation metrics
-    y_true = test_data['species']
-    y_pred = test_data['predicted']
+    # Discretize test data
+    X_test_discrete = discretize_test_data(X_test, bins)
     
-    accuracy = accuracy_score(y_true, y_pred)
-    precision = precision_score(y_true, y_pred, average='macro')
-    recall = recall_score(y_true, y_pred, average='macro')
-    conf_matrix = confusion_matrix(y_true, y_pred)
+    # Make predictions
+    y_pred = predict(X_test_discrete, probabilities)
+    
+    # Calculate metrics
+    conf_matrix = confusion_matrix(y_test, y_pred)
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, average='weighted')
+    recall = recall_score(y_test, y_pred, average='weighted')
+    
+    print(f"Confusion Matrix:\n{conf_matrix}")
+    print(f"\nAccuracy: {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall: {recall:.4f}")
+    
+    # Analyze misclassified samples
+    misclassified = test_data[y_test != y_pred]
+    print("\nMisclassified samples:")
+    print(misclassified)
 
-    print("Confusion Matrix:\n", conf_matrix)
-    print(f"Accuracy: {accuracy:.2f}")
-    print(f"Precision: {precision:.2f}")
-    print(f"Recall: {recall:.2f}")
-
-# Load test data
-test_data = pd.read_csv("test.csv")
-
-# Load priors and likelihoods
-priors, likelihoods = load_probabilities()
-
-# Evaluate model
-evaluate(test_data, priors, likelihoods)
+if __name__ == "__main__":
+    evaluate_model()
